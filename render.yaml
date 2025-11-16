@@ -13,7 +13,9 @@ key: GOOGLE_API_KEY
 generateValue: false
 value: ""
 
+envVars:
 key: TAVILY_API_KEY
 generateValue: false
 value: ""
+
 
