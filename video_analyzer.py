@@ -16,56 +16,74 @@ import uuid
 
 def download_video_from_url(url: str) -> str | None:
     """
-    Downloads a video from a URL to a *unique temporary file*.
-    
-    Args:
-        url: The URL of the video.
-
-    Returns:
-        The file path to the downloaded video, or None if download failed.
+    Downloads a video from a URL using yt-dlp with cookies to bypass bot detection.
     """
-    import pathlib
-    import traceback
-    
     try:
+        # --- 1. Load cookies from Render secret file ---
+        cookie_path = os.getenv("YOUTUBE_COOKIES_PATH")
+        if not cookie_path or not pathlib.Path(cookie_path).exists():
+            print("WARNING: YOUTUBE_COOKIES_PATH not set or file missing. Bot detection likely.")
+            cookie_path = None
+        else:
+            print(f"Using cookies: {cookie_path}")
+
+        # --- 2. Unique temp file ---
         temp_dir = tempfile.gettempdir()
         unique_filename = f"{uuid.uuid4()}.%(ext)s"
         output_template = str(pathlib.Path(temp_dir) / unique_filename)
-        
-        print(f"  Setting download location to: {output_template}")
+        print(f"Download target: {output_template}")
 
-        # Configure yt_dlp options
+        # --- 3. yt-dlp options ---
         ydl_opts = {
-            # --- FIX: Corrected 'map4' to 'mp4' ---
-            'format': 'best[ext=mp4][height<=?1080]/best[ext=mp4]/best',
+            'format': 'best[ext=mp4][height<=1080]/best[ext=mp4]/best',
             'outtmpl': output_template,
-            'quiet': True,
+            'quiet': False,  # Set to True in prod if you don't want logs
             'noplaylist': True,
+            'merge_output_format': 'mp4',
+            'cookiefile': cookie_path,  # <-- CRITICAL: Bypass bot check
+            'user_agent': (
+                'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 '
+                '(KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36'
+            ),
             'extractor_args': {
                 'youtube': {
-                    'client': 'android',
+                    'client': 'android',  # Helps, but cookies are required
+                    'skip': ['dash', 'hls']  # Prefer direct MP4
                 }
-            }
-        } # <-- FIX: Added the missing closing brace
+            },
+            'sleep_interval': 1,
+            'max_sleep_interval': 3,
+        }
 
-        # Download the video
+        # --- 4. Download ---
         downloaded_filepath = None
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            print("  Fetching info and downloading...")
+            print("Extracting info & downloading...")
             info = ydl.extract_info(url, download=True)
             downloaded_filepath = ydl.prepare_filename(info)
 
-        if not downloaded_filepath or not os.path.exists(downloaded_filepath) or os.path.getsize(downloaded_filepath) == 0:
-            print("Error: Download failed, file is empty or does not exist.")
-            if downloaded_filepath and os.path.exists(downloaded_filepath):
-                os.remove(downloaded_filepath) 
+        # --- 5. Validate ---
+        if not downloaded_filepath or not os.path.exists(downloaded_filepath):
+            print("Download failed: file not found.")
             return None
 
-        print(f"  Download complete: {downloaded_filepath}")
+        if os.path.getsize(downloaded_filepath) == 0:
+            print("Downloaded file is empty.")
+            os.remove(downloaded_filepath)
+            return None
+
+        print(f"Download SUCCESS: {downloaded_filepath}")
         return downloaded_filepath
-    
+
+    except yt_dlp.utils.DownloadError as e:
+        if "Sign in to confirm" in str(e):
+            print("BOT DETECTION: YouTube requires login. Update cookies.")
+        else:
+            print(f"yt-dlp DownloadError: {e}")
+        traceback.print_exc()
+        return None
     except Exception as e:
-        print(f"Error downloading video from URL: {e}")
+        print(f"Unexpected error in download: {e}")
         traceback.print_exc()
         return None
 
@@ -221,3 +239,4 @@ def analyze_video(video_file_path: str, prompt: str) -> dict:
                 print("Remote cleanup complete.")
             except Exception as e:
                 print(f"Error during remote file cleanup: {e}")
+
