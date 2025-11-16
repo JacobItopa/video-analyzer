@@ -1,21 +1,16 @@
 services:
-
-type: web
-name: video-analyzer-api
-runtime: python
-systemDependencies: ffmpeg
-buildCommand: pip install -r requirements.txt
-startCommand: gunicorn -w 4 -k uvicorn.workers.UvicornWorker fastapi_app:app
-plan: free
-envVars:
-
-key: GOOGLE_API_KEY
-generateValue: false
-value: ""
-
-envVars:
-key: TAVILY_API_KEY
-generateValue: false
-value: ""
-
-
+  - type: web
+    name: video-analyzer-api
+    runtime: python
+    systemDependencies:
+      - ffmpeg
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn -w 4 -k uvicorn.workers.UvicornWorker fastapi_app:app
+    plan: free
+    envVars:
+      GOOGLE_API_KEY:
+        generateValue: false
+        value: ""
+      TAVILY_API_KEY:
+        generateValue: false
+        value: ""
