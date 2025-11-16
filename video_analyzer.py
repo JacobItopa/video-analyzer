@@ -46,8 +46,7 @@ def download_video_from_url(url: str) -> str | None:
                     'client': 'android',
                 }
             }
-        }
-        # --- END OF ydl_opts DICTIONARY ---
+        } # <-- FIX: Added the missing closing brace
 
         # Download the video
         downloaded_filepath = None
