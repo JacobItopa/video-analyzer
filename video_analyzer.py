@@ -6,11 +6,11 @@ import yt_dlp
 import traceback
 import json
 from langchain_tavily import TavilySearch
-import tempfile  # <-- Added
-import uuid      # <-- Added
+import tempfile
+import uuid
 
 # --- Configuration ---
-# API Keys (GOOGLE_API_KEY, TAVILY_API_KEY) are now read from
+# API Keys (GOOGLE_API_KEY, TAVILY_API_KEY) are read from
 # environment variables by fastapi_app.py.
 # ---
 
@@ -28,30 +28,26 @@ def download_video_from_url(url: str) -> str | None:
     import traceback
     
     try:
-        # --- CRITICAL CHANGE ---
-        # Get the system's temporary directory
         temp_dir = tempfile.gettempdir()
-        
-        # Create a unique filename to avoid collisions
-        # e.g., 'C:\Temp\2a1b4c6d-1234.mp4'
         unique_filename = f"{uuid.uuid4()}.%(ext)s"
         output_template = str(pathlib.Path(temp_dir) / unique_filename)
         
         print(f"  Setting download location to: {output_template}")
-        # --- END OF CHANGE ---
 
         # Configure yt_dlp options
         ydl_opts = {
-            'format': 'best[ext=map4][height<=?1080]/best[ext=mp4]/best',
+            # --- FIX: Corrected 'map4' to 'mp4' ---
+            'format': 'best[ext=mp4][height<=?1080]/best[ext=mp4]/best',
             'outtmpl': output_template,
             'quiet': True,
             'noplaylist': True,
-            # --- FIX FOR "403: Sign in to confirm you're not a bot" ---
             'extractor_args': {
                 'youtube': {
                     'client': 'android',
                 }
+            }
         }
+        # --- END OF ydl_opts DICTIONARY ---
 
         # Download the video
         downloaded_filepath = None
@@ -60,7 +56,6 @@ def download_video_from_url(url: str) -> str | None:
             info = ydl.extract_info(url, download=True)
             downloaded_filepath = ydl.prepare_filename(info)
 
-        # Check if the file was actually created and has size
         if not downloaded_filepath or not os.path.exists(downloaded_filepath) or os.path.getsize(downloaded_filepath) == 0:
             print("Error: Download failed, file is empty or does not exist.")
             if downloaded_filepath and os.path.exists(downloaded_filepath):
@@ -227,7 +222,3 @@ def analyze_video(video_file_path: str, prompt: str) -> dict:
                 print("Remote cleanup complete.")
             except Exception as e:
                 print(f"Error during remote file cleanup: {e}")
-
-# The `if __name__ == "__main__":` block has been removed,
-
-# as fastapi_app.py is now the entry point.
