@@ -37,7 +37,7 @@ app = FastAPI(
 class VideoRequest(BaseModel):
     """Pydantic model for the incoming request body."""
     url: HttpUrl # Use HttpUrl for built-in URL validation
-    prompt: str = "tell me about this video and what game or movie it is"
+    prompt: str = "What is the name of the movie?"
 
 class ErrorResponse(BaseModel):
     """Pydantic model for error responses."""
@@ -125,4 +125,5 @@ async def analyze_video_endpoint(request: VideoRequest):
 # --- Main entry point to run the server ---
 # The if __name__ == "__main__": block has been removed.
 # Gunicorn will start the server directly by referencing the 'app' object.
+
 # The command is: gunicorn -w 4 -k uvicorn.workers.UvicornWorker fastapi_app:app
