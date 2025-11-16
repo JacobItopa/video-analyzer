@@ -46,6 +46,11 @@ def download_video_from_url(url: str) -> str | None:
             'outtmpl': output_template,
             'quiet': True,
             'noplaylist': True,
+            # --- FIX FOR "403: Sign in to confirm you're not a bot" ---
+            'extractor_args': {
+                'youtube': {
+                    'client': 'android',
+                }
         }
 
         # Download the video
@@ -224,4 +229,5 @@ def analyze_video(video_file_path: str, prompt: str) -> dict:
                 print(f"Error during remote file cleanup: {e}")
 
 # The `if __name__ == "__main__":` block has been removed,
+
 # as fastapi_app.py is now the entry point.
