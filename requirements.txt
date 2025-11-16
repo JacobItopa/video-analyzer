@@ -1,0 +1,8 @@
+google-generativeai
+yt-dlp
+langchain-tavily
+fastapi
+uvicorn[standard]  # For running the server
+pydantic
+python-dotenv      # For managing environment variables
+gunicorn           # For production server

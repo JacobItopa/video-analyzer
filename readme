@@ -1,0 +1,97 @@
+Video Analyzer API
+
+This project turns the video analysis script into a FastAPI web service, ready for deployment on Render.
+
+1. Local Setup (Review)
+
+Virtual Environment:
+
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+
+
+Install Dependencies:
+
+pip install -r requirements.txt
+
+
+Set Environment Variables:
+Create a .env file and add your keys:
+
+GOOGLE_API_KEY=your_google_ai_api_key_here
+TAVILY_API_KEY=your_tavily_api_key_here
+
+
+Run Locally:
+
+python fastapi_app.py
+
+
+2. Deploy to Render (for Free)
+
+Prerequisites
+
+Render Account: Sign up for a free account.
+
+GitHub Account: You need to host your code in a GitHub repository.
+
+Push Your Code: Push all 5 files to your new GitHub repo:
+
+fastapi_app.py
+
+video_analyzer.py
+
+requirements.txt
+
+README.md (this file)
+
+render.yaml (the new file)
+
+IMPORTANT: Do not push your .env file. Add .env to a .gitignore file.
+
+Deployment Steps
+
+Log in to your Render Dashboard.
+
+Click New + and select Blueprint.
+
+Connect your GitHub account and select the repository you just created.
+
+Render will automatically detect your render.yaml file and show the "video-analyzer-api" service.
+
+Click Create New Resource. Render will approve the plan.
+
+IMPORTANT (Set API Keys): Before the first deploy, you must add your API keys.
+
+Go to your new service's dashboard.
+
+Click the Environment tab.
+
+Under Secret Files / Environment Variables, click Add Environment Variable.
+
+Add GOOGLE_API_KEY and paste in your key.
+
+Click Add Environment Variable again, add TAVILY_API_KEY, and paste in your key.
+
+Click Save Changes.
+
+Deploy:
+
+Go to the Deploys tab.
+
+Click Trigger Deploy > Deploy latest commit.
+
+Render will now build your service. It will install FFmpeg, install all your Python packages, and then start the gunicorn server. The first build might take a few minutes.
+
+3. Using Your Deployed API
+
+Once the deploy is "Live", Render will give you a public URL on the top of the page, like:
+https://video-analyzer-api.onrender.com
+
+Your API documentation will be at:
+https://video-analyzer-api.onrender.com/docs
+
+The endpoint for developers to call is:
+https://video-analyzer-api.onrender.com/analyze-video
+
+Note on Render's Free Tier: Free services "spin down" after 15 minutes of inactivity. The first request after it spins down will be slow (30-60 seconds) because the server has to restart. Subsequent requests will be fast.
