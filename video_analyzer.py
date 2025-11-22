@@ -8,6 +8,7 @@ import json
 from langchain_tavily import TavilySearch
 import tempfile
 import uuid
+import shutil
 
 # --- Configuration ---
 # API Keys (GOOGLE_API_KEY, TAVILY_API_KEY, YOUTUBE_COOKIES) are read from
@@ -17,7 +18,7 @@ import uuid
 def download_video_from_url(url: str) -> str | None:
     """
     Downloads a video from a URL to a *unique temporary file*.
-    Uses cookies if provided to bypass bot detection.
+    Adapts strategy based on whether FFmpeg is available.
     """
     import pathlib
     import traceback
@@ -26,67 +27,96 @@ def download_video_from_url(url: str) -> str | None:
     
     try:
         temp_dir = tempfile.gettempdir()
-        # Use a generic extension template; yt-dlp will fill in the actual ext
         unique_filename_base = str(uuid.uuid4())
-        output_template = str(pathlib.Path(temp_dir) / f"{unique_filename_base}.%(ext)s")
         
-        print(f"  Setting download location to: {output_template}")
-
-        # Configure yt_dlp options
-        ydl_opts = {
-            # --- ROBUST "NO-FFMPEG" SETTINGS ---
-            # 1. We prioritize 'best[ext=mp4]' to get a ready-to-use MP4 file.
-            # 2. If that fails, we fall back to 'best' (which might be webm).
-            # 3. We REMOVED 'merge_output_format' because that requires FFmpeg.
-            'format': 'best[ext=mp4]/best',
-            # -----------------------------------
-            'outtmpl': output_template,
-            'quiet': True,
-            'noplaylist': True,
-            'extractor_args': {
-                'youtube': {
-                    'player_client': ['android', 'web'],
-                }
-            }
-        }
+        # Check if FFmpeg is installed
+        ffmpeg_available = shutil.which('ffmpeg') is not None
+        print(f"  FFmpeg available: {ffmpeg_available}")
 
         # --- Cookies Handling ---
+        cookie_args = {}
         cookies_content = os.environ.get("YOUTUBE_COOKIES")
         if cookies_content:
             print("  Found YOUTUBE_COOKIES environment variable. Creating cookie file...")
+            # delete=False is important so we can close it and let yt-dlp open it
             with tempfile.NamedTemporaryFile(mode='w+', delete=False, suffix='.txt') as cookie_file:
                 cookie_file.write(cookies_content)
                 cookie_file_path = cookie_file.name
-            
-            ydl_opts['cookiefile'] = cookie_file_path
+            cookie_args['cookiefile'] = cookie_file_path
             print("  Cookies configured.")
         else:
-            print("  WARNING: No YOUTUBE_COOKIES found. Download may fail with 'Sign in' error.")
+            print("  WARNING: No YOUTUBE_COOKIES found.")
         # ------------------------
 
-        # Download the video
-        downloaded_filepath = None
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            print("  Fetching info and downloading...")
-            info = ydl.extract_info(url, download=True)
-            
-            # Because we aren't merging, we need to find the file that was actually downloaded.
-            # ydl.prepare_filename usually gives the correct path with extension.
-            temp_path = ydl.prepare_filename(info)
-            
-            if os.path.exists(temp_path):
-                downloaded_filepath = temp_path
-                print(f"  File found at: {downloaded_filepath}")
-            else:
-                # Fallback search: sometimes the extension in 'info' differs from reality
-                # We check for common extensions with our unique ID
-                for ext in ['mp4', 'webm', 'mkv']:
-                    possible_path = str(pathlib.Path(temp_dir) / f"{unique_filename_base}.{ext}")
-                    if os.path.exists(possible_path):
-                        downloaded_filepath = possible_path
-                        print(f"  File found via fallback search: {downloaded_filepath}")
-                        break
+        # --- STRATEGY 1: Determine Options ---
+        if ffmpeg_available:
+            print("  [Strategy] High Quality (FFmpeg detected).")
+            # With FFmpeg, we can download best video + best audio and merge them.
+            output_template = str(pathlib.Path(temp_dir) / f"{unique_filename_base}.%(ext)s")
+            ydl_opts = {
+                'format': 'bestvideo+bestaudio/best',
+                'merge_output_format': 'mp4',
+                'outtmpl': output_template,
+                'quiet': True,
+                'noplaylist': True,
+                'extractor_args': {'youtube': {'player_client': ['android', 'web']}},
+                **cookie_args
+            }
+        else:
+            print("  [Strategy] Safe Mode (No FFmpeg). Relaxing format constraints.")
+            # Without FFmpeg, we CANNOT merge. We must find a single file.
+            # We remove [ext=mp4] to allow webm/mkv if that's all that exists.
+            output_template = str(pathlib.Path(temp_dir) / f"{unique_filename_base}.%(ext)s")
+            ydl_opts = {
+                'format': 'best', # Just get the best single file with video+audio
+                'outtmpl': output_template,
+                'quiet': True,
+                'noplaylist': True,
+                **cookie_args
+            }
 
+        # --- DOWNLOAD ATTEMPT ---
+        downloaded_filepath = None
+        
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                print("  Fetching info and downloading...")
+                info = ydl.extract_info(url, download=True)
+                
+                if ffmpeg_available:
+                    # If we merged, it should be .mp4
+                    expected = str(pathlib.Path(temp_dir) / f"{unique_filename_base}.mp4")
+                    if os.path.exists(expected):
+                        downloaded_filepath = expected
+                    else:
+                        downloaded_filepath = ydl.prepare_filename(info)
+                else:
+                    # If we didn't merge, we trust prepare_filename, but check for existence
+                    temp_path = ydl.prepare_filename(info)
+                    if os.path.exists(temp_path):
+                        downloaded_filepath = temp_path
+                    else:
+                        # Fallback search for any file with our UUID
+                        print("  Primary path not found, searching for download...")
+                        for file in pathlib.Path(temp_dir).glob(f"{unique_filename_base}.*"):
+                            downloaded_filepath = str(file)
+                            break
+
+        except Exception as first_error:
+            print(f"  [Warning] First download attempt failed: {first_error}")
+            # --- STRATEGY 2: Last Resort (If first attempt failed) ---
+            if not ffmpeg_available:
+                print("  [Strategy] Last Resort. Trying 'worst' quality to ensure success.")
+                ydl_opts['format'] = 'worst' # Often guarantees a simple single file (360p)
+                try:
+                    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                        info = ydl.extract_info(url, download=True)
+                        downloaded_filepath = ydl.prepare_filename(info)
+                except Exception as second_error:
+                    print(f"  [Error] Last resort failed: {second_error}")
+                    raise second_error # Re-raise if even this fails
+
+        # Final Validation
         if not downloaded_filepath or not os.path.exists(downloaded_filepath) or os.path.getsize(downloaded_filepath) == 0:
             print("Error: Download failed, file is empty or does not exist.")
             if downloaded_filepath and os.path.exists(downloaded_filepath):
@@ -106,7 +136,6 @@ def download_video_from_url(url: str) -> str | None:
         if cookie_file_path and os.path.exists(cookie_file_path):
             try:
                 os.remove(cookie_file_path)
-                print("  Cleaned up cookie file.")
             except Exception:
                 pass
 
