@@ -9,5 +9,8 @@ services:
         value: ""
       - key: TAVILY_API_KEY
         value: ""
+      - key: YOUTUBE_COOKIES
+        value: ""
 
     dockerfilePath: ./Dockerfile
+
