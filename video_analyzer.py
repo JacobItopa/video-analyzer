@@ -26,7 +26,7 @@ def download_video_from_url(url: str) -> str | None:
     
     try:
         temp_dir = tempfile.gettempdir()
-        # We use a generic extension here, yt-dlp will add the correct one (mp4)
+        # Use a generic extension template; yt-dlp will fill in the actual ext
         unique_filename_base = str(uuid.uuid4())
         output_template = str(pathlib.Path(temp_dir) / f"{unique_filename_base}.%(ext)s")
         
@@ -34,13 +34,12 @@ def download_video_from_url(url: str) -> str | None:
 
         # Configure yt_dlp options
         ydl_opts = {
-            # --- UPDATED FORMAT SETTINGS ---
-            # Instead of looking for a specific pre-existing MP4, we now ask for
-            # the best quality video + best quality audio.
-            # We then use 'merge_output_format' to tell FFmpeg to combine them into an MP4.
-            'format': 'bestvideo+bestaudio/best',
-            'merge_output_format': 'mp4',
-            # -------------------------------
+            # --- ROBUST "NO-FFMPEG" SETTINGS ---
+            # 1. We prioritize 'best[ext=mp4]' to get a ready-to-use MP4 file.
+            # 2. If that fails, we fall back to 'best' (which might be webm).
+            # 3. We REMOVED 'merge_output_format' because that requires FFmpeg.
+            'format': 'best[ext=mp4]/best',
+            # -----------------------------------
             'outtmpl': output_template,
             'quiet': True,
             'noplaylist': True,
@@ -70,21 +69,23 @@ def download_video_from_url(url: str) -> str | None:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             print("  Fetching info and downloading...")
             info = ydl.extract_info(url, download=True)
-            # prepare_filename might return the wrong extension if merging happens,
-            # so we rely on the fact that we forced merge_output_format='mp4'
-            # The actual file will be at: temp_dir / unique_filename_base + ".mp4"
-            expected_filepath = str(pathlib.Path(temp_dir) / f"{unique_filename_base}.mp4")
             
-            # Verify if the file exists at the expected path
-            if os.path.exists(expected_filepath):
-                downloaded_filepath = expected_filepath
+            # Because we aren't merging, we need to find the file that was actually downloaded.
+            # ydl.prepare_filename usually gives the correct path with extension.
+            temp_path = ydl.prepare_filename(info)
+            
+            if os.path.exists(temp_path):
+                downloaded_filepath = temp_path
+                print(f"  File found at: {downloaded_filepath}")
             else:
-                # Fallback: try what prepare_filename returns (though it might be .mkv or .webm before merge)
-                temp_path = ydl.prepare_filename(info)
-                # If yt-dlp merged it, the temp_path might still have the old extension but not exist
-                # We check strictly for the mp4 version first.
-                if os.path.exists(temp_path):
-                    downloaded_filepath = temp_path
+                # Fallback search: sometimes the extension in 'info' differs from reality
+                # We check for common extensions with our unique ID
+                for ext in ['mp4', 'webm', 'mkv']:
+                    possible_path = str(pathlib.Path(temp_dir) / f"{unique_filename_base}.{ext}")
+                    if os.path.exists(possible_path):
+                        downloaded_filepath = possible_path
+                        print(f"  File found via fallback search: {downloaded_filepath}")
+                        break
 
         if not downloaded_filepath or not os.path.exists(downloaded_filepath) or os.path.getsize(downloaded_filepath) == 0:
             print("Error: Download failed, file is empty or does not exist.")
