@@ -26,19 +26,24 @@ def download_video_from_url(url: str) -> str | None:
     
     try:
         temp_dir = tempfile.gettempdir()
-        unique_filename = f"{uuid.uuid4()}.%(ext)s"
-        output_template = str(pathlib.Path(temp_dir) / unique_filename)
+        # We use a generic extension here, yt-dlp will add the correct one (mp4)
+        unique_filename_base = str(uuid.uuid4())
+        output_template = str(pathlib.Path(temp_dir) / f"{unique_filename_base}.%(ext)s")
         
         print(f"  Setting download location to: {output_template}")
 
         # Configure yt_dlp options
         ydl_opts = {
-            'format': 'best[ext=mp4][height<=?1080]/best[ext=mp4]/best',
+            # --- UPDATED FORMAT SETTINGS ---
+            # Instead of looking for a specific pre-existing MP4, we now ask for
+            # the best quality video + best quality audio.
+            # We then use 'merge_output_format' to tell FFmpeg to combine them into an MP4.
+            'format': 'bestvideo+bestaudio/best',
+            'merge_output_format': 'mp4',
+            # -------------------------------
             'outtmpl': output_template,
             'quiet': True,
             'noplaylist': True,
-            # We default to the Android client, which sometimes helps,
-            # but Cookies are the real fix.
             'extractor_args': {
                 'youtube': {
                     'player_client': ['android', 'web'],
@@ -46,30 +51,40 @@ def download_video_from_url(url: str) -> str | None:
             }
         }
 
-        # --- NEW: Handle Cookies from Environment Variable ---
-        # This is the fix for "Sign in to confirm you're not a bot"
+        # --- Cookies Handling ---
         cookies_content = os.environ.get("YOUTUBE_COOKIES")
         if cookies_content:
             print("  Found YOUTUBE_COOKIES environment variable. Creating cookie file...")
-            # Create a temporary file for the cookies
-            # delete=False is important because we close it so yt-dlp can open it
             with tempfile.NamedTemporaryFile(mode='w+', delete=False, suffix='.txt') as cookie_file:
                 cookie_file.write(cookies_content)
                 cookie_file_path = cookie_file.name
             
-            # Tell yt-dlp to use this file
             ydl_opts['cookiefile'] = cookie_file_path
             print("  Cookies configured.")
         else:
             print("  WARNING: No YOUTUBE_COOKIES found. Download may fail with 'Sign in' error.")
-        # -----------------------------------------------------
+        # ------------------------
 
         # Download the video
         downloaded_filepath = None
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             print("  Fetching info and downloading...")
             info = ydl.extract_info(url, download=True)
-            downloaded_filepath = ydl.prepare_filename(info)
+            # prepare_filename might return the wrong extension if merging happens,
+            # so we rely on the fact that we forced merge_output_format='mp4'
+            # The actual file will be at: temp_dir / unique_filename_base + ".mp4"
+            expected_filepath = str(pathlib.Path(temp_dir) / f"{unique_filename_base}.mp4")
+            
+            # Verify if the file exists at the expected path
+            if os.path.exists(expected_filepath):
+                downloaded_filepath = expected_filepath
+            else:
+                # Fallback: try what prepare_filename returns (though it might be .mkv or .webm before merge)
+                temp_path = ydl.prepare_filename(info)
+                # If yt-dlp merged it, the temp_path might still have the old extension but not exist
+                # We check strictly for the mp4 version first.
+                if os.path.exists(temp_path):
+                    downloaded_filepath = temp_path
 
         if not downloaded_filepath or not os.path.exists(downloaded_filepath) or os.path.getsize(downloaded_filepath) == 0:
             print("Error: Download failed, file is empty or does not exist.")
