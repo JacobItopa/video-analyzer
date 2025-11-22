@@ -10,82 +10,89 @@ import tempfile
 import uuid
 
 # --- Configuration ---
-# API Keys (GOOGLE_API_KEY, TAVILY_API_KEY) are read from
-# environment variables by fastapi_app.py.
+# API Keys (GOOGLE_API_KEY, TAVILY_API_KEY, YOUTUBE_COOKIES) are read from
+# environment variables.
 # ---
 
 def download_video_from_url(url: str) -> str | None:
     """
-    Downloads a video from a URL using yt-dlp with cookies to bypass bot detection.
+    Downloads a video from a URL to a *unique temporary file*.
+    Uses cookies if provided to bypass bot detection.
     """
+    import pathlib
+    import traceback
+    
+    cookie_file_path = None
+    
     try:
-        # --- 1. Load cookies from Render secret file ---
-        cookie_path = os.getenv("YOUTUBE_COOKIES_PATH")
-        if not cookie_path or not pathlib.Path(cookie_path).exists():
-            print("WARNING: YOUTUBE_COOKIES_PATH not set or file missing. Bot detection likely.")
-            cookie_path = None
-        else:
-            print(f"Using cookies: {cookie_path}")
-
-        # --- 2. Unique temp file ---
         temp_dir = tempfile.gettempdir()
         unique_filename = f"{uuid.uuid4()}.%(ext)s"
         output_template = str(pathlib.Path(temp_dir) / unique_filename)
-        print(f"Download target: {output_template}")
+        
+        print(f"  Setting download location to: {output_template}")
 
-        # --- 3. yt-dlp options ---
+        # Configure yt_dlp options
         ydl_opts = {
-            'format': 'best[ext=mp4][height<=1080]/best[ext=mp4]/best',
+            'format': 'best[ext=mp4][height<=?1080]/best[ext=mp4]/best',
             'outtmpl': output_template,
-            'quiet': False,  # Set to True in prod if you don't want logs
+            'quiet': True,
             'noplaylist': True,
-            'merge_output_format': 'mp4',
-            'cookiefile': cookie_path,  # <-- CRITICAL: Bypass bot check
-            'user_agent': (
-                'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 '
-                '(KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36'
-            ),
+            # We default to the Android client, which sometimes helps,
+            # but Cookies are the real fix.
             'extractor_args': {
                 'youtube': {
-                    'client': 'android',  # Helps, but cookies are required
-                    'skip': ['dash', 'hls']  # Prefer direct MP4
+                    'player_client': ['android', 'web'],
                 }
-            },
-            'sleep_interval': 1,
-            'max_sleep_interval': 3,
+            }
         }
 
-        # --- 4. Download ---
+        # --- NEW: Handle Cookies from Environment Variable ---
+        # This is the fix for "Sign in to confirm you're not a bot"
+        cookies_content = os.environ.get("YOUTUBE_COOKIES")
+        if cookies_content:
+            print("  Found YOUTUBE_COOKIES environment variable. Creating cookie file...")
+            # Create a temporary file for the cookies
+            # delete=False is important because we close it so yt-dlp can open it
+            with tempfile.NamedTemporaryFile(mode='w+', delete=False, suffix='.txt') as cookie_file:
+                cookie_file.write(cookies_content)
+                cookie_file_path = cookie_file.name
+            
+            # Tell yt-dlp to use this file
+            ydl_opts['cookiefile'] = cookie_file_path
+            print("  Cookies configured.")
+        else:
+            print("  WARNING: No YOUTUBE_COOKIES found. Download may fail with 'Sign in' error.")
+        # -----------------------------------------------------
+
+        # Download the video
         downloaded_filepath = None
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            print("Extracting info & downloading...")
+            print("  Fetching info and downloading...")
             info = ydl.extract_info(url, download=True)
             downloaded_filepath = ydl.prepare_filename(info)
 
-        # --- 5. Validate ---
-        if not downloaded_filepath or not os.path.exists(downloaded_filepath):
-            print("Download failed: file not found.")
+        if not downloaded_filepath or not os.path.exists(downloaded_filepath) or os.path.getsize(downloaded_filepath) == 0:
+            print("Error: Download failed, file is empty or does not exist.")
+            if downloaded_filepath and os.path.exists(downloaded_filepath):
+                os.remove(downloaded_filepath) 
             return None
 
-        if os.path.getsize(downloaded_filepath) == 0:
-            print("Downloaded file is empty.")
-            os.remove(downloaded_filepath)
-            return None
-
-        print(f"Download SUCCESS: {downloaded_filepath}")
+        print(f"  Download complete: {downloaded_filepath}")
         return downloaded_filepath
-
-    except yt_dlp.utils.DownloadError as e:
-        if "Sign in to confirm" in str(e):
-            print("BOT DETECTION: YouTube requires login. Update cookies.")
-        else:
-            print(f"yt-dlp DownloadError: {e}")
-        traceback.print_exc()
-        return None
+    
     except Exception as e:
-        print(f"Unexpected error in download: {e}")
+        print(f"Error downloading video from URL: {e}")
         traceback.print_exc()
         return None
+    
+    finally:
+        # Clean up the temporary cookie file
+        if cookie_file_path and os.path.exists(cookie_file_path):
+            try:
+                os.remove(cookie_file_path)
+                print("  Cleaned up cookie file.")
+            except Exception:
+                pass
 
 def extract_title(analysis_text: str, model: genai.GenerativeModel) -> str:
     """
@@ -239,4 +246,3 @@ def analyze_video(video_file_path: str, prompt: str) -> dict:
                 print("Remote cleanup complete.")
             except Exception as e:
                 print(f"Error during remote file cleanup: {e}")
-
